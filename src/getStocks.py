@@ -4,12 +4,12 @@ from dotenv import load_dotenv
 from datetime import datetime
 import pymysql
 from config_vars import connection, cursor
-
+import time
 load_dotenv()
 
 API_KEY = os.getenv("POLYGON_API_KEY")
 
-def get_symbols(limit=10):
+def get_symbols(limit=100):
     url = f"https://api.polygon.io/v3/reference/tickers?market=stocks&active=true&limit={limit}&apiKey={API_KEY}"
     
     response = requests.get(url)
@@ -20,7 +20,7 @@ def get_symbols(limit=10):
     for ticker in data.get("results", []):
         symbol = ticker.get("ticker")
         company_name = ticker.get("name")
-
+        time.sleep(0.1)  # To avoid hitting API rate limits
         if symbol and company_name:
             symbols.append((symbol, company_name))
 
@@ -67,7 +67,7 @@ def insert_stock(symbol, company_name, price, percent_change, date):
 
 def main():
 
-    symbols = get_symbols(limit=10)
+    symbols = get_symbols(limit=100)  # Adjust limit as needed
 
     print(f"Found {len(symbols)} symbols")
 
