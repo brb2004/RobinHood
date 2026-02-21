@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from config_vars import connection
+from src.config.config_vars import get_connection
+from src.repos.stocks_repos import repo
 import bcrypt
 
 app = Flask(__name__)
@@ -22,7 +23,7 @@ def create_user():
         bcrypt.gensalt()
     ).decode()
 
-    con = connection()
+    con = get_connection()
 
     try:
         with con.cursor() as cur:
@@ -53,7 +54,7 @@ def login():
     if not data or "email" not in data or "password" not in data:
         return jsonify({"error": "Missing credentials"}), 400
 
-    con = connection()
+    con = get_connection()
 
     try:
         with con.cursor() as cur:
@@ -79,7 +80,14 @@ def login():
 
     finally:
         con.close()
+@app.route("/stocks", methods=["GET"])
+def get_stocks():
+    result = repo.get_custom_stocks(
+    stocks=["AACB", "AACBR", "AACBU", "AACG", "AACIU"],
+    items=["earnings", "dividend"]
+    )
 
+    return jsonify(result), 200
 
 if __name__ == "__main__":
     app.run(debug=True)

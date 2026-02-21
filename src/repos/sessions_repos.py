@@ -1,4 +1,4 @@
-from  config_vars import connection
+from  config.config_vars import connection
 import pymysql
 
 class SessionsRepos:

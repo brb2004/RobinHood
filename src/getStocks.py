@@ -1,85 +1,105 @@
 import requests
-import os
-from dotenv import load_dotenv
-from datetime import datetime
-import pymysql
-from config_vars import connection, cursor
+from src.config import config_vars as config
 import time
-load_dotenv()
 
-API_KEY = os.getenv("POLYGON_API_KEY")
+BASE_URL = "https://api.polygon.io"
+
 
 def get_symbols(limit=100):
-    url = f"https://api.polygon.io/v3/reference/tickers?market=stocks&active=true&limit={limit}&apiKey={API_KEY}"
-    
-    response = requests.get(url)
+    url = f"{BASE_URL}/v3/reference/tickers"
+
+    params = {
+        "market": "stocks",
+        "exchange": "XNAS",
+        "active": "true",
+        "limit": limit,
+        "apiKey": config.POLYGON_API_KEY
+    }
+
+    response = requests.get(url, params=params)
+    response.raise_for_status()
+
     data = response.json()
-
-    symbols = []
-
-    for ticker in data.get("results", []):
-        symbol = ticker.get("ticker")
-        company_name = ticker.get("name")
-        time.sleep(0.1)  # To avoid hitting API rate limits
-        if symbol and company_name:
-            symbols.append((symbol, company_name))
-
-    return symbols
+    return [ticker["ticker"] for ticker in data.get("results", [])]
 
 
 def get_stock_price(symbol):
-    url = f"https://api.polygon.io/v2/aggs/ticker/{symbol}/prev?adjusted=true&apiKey={API_KEY}"
-    
-    response = requests.get(url)
+    url = f"{BASE_URL}/v2/aggs/ticker/{symbol}/prev"
+
+    params = {
+        "adjusted": "true",
+        "apiKey": config.POLYGON_API_KEY
+    }
+
+    response = requests.get(url, params=params)
+
+    if response.status_code != 200:
+        print(f"Error fetching {symbol}: {response.text}")
+        return None
+
     data = response.json()
 
-    results = data.get("results")
+    if not data.get("results"):
+        return None
 
-    if results:
-        close_price = results[0]["c"]
-        open_price = results[0]["o"]
+    result = data["results"][0]
 
-        percent_change = ((close_price - open_price) / open_price) * 100
+    price = result["c"]
+    volume = result["v"]
+    timestamp = result["t"]
 
-        timestamp = results[0]["t"]
-        date = datetime.fromtimestamp(timestamp / 1000).date()
+    open_price = result["o"]
+    percent_change = ((price - open_price) / open_price) * 100 if open_price else 0
 
-        return close_price, percent_change, date
-    return None, None, None
+    return price, percent_change, volume, timestamp
 
-def insert_stock(symbol, company_name, price, percent_change, date):
+
+def insert_stock_price(symbol, price, percent_change, volume, timestamp):
+    connection = config.get_connection()
+    cursor = connection.cursor()
+
     try:
         cursor.execute(
-            """
-            INSERT INTO stocks (symbol, company_name, price, percent_change, date)
-            VALUES (%s, %s, %s, %s, %s)
-            """,
-            (symbol, company_name, price, percent_change, date)
+            "INSERT IGNORE INTO companies (symbol) VALUES (%s)",
+            (symbol,)
         )
+
+        query = """INSERT INTO stock_prices (symbol, price, percent_change, volume, market_timestamp) VALUES (%s, %s, %s, %s, FROM_UNIXTIME(%s / 1000)) 
+                ON DUPLICATE KEY UPDATE 
+                price = VALUES(price),
+                percent_change = VALUES(percent_change),
+                volume = VALUES(volume)
+                """
+
+        cursor.execute(query, (symbol, price, percent_change, volume, timestamp))
+
         connection.commit()
 
-    except pymysql.err.IntegrityError:
-        # Duplicate symbol/date
-        pass
+    finally:
+        cursor.close()
+        connection.close()
 
-    except Exception as e:
-        print("Insert error:", e)
 
 def main():
-
-    symbols = get_symbols(limit=100)  # Adjust limit as needed
+    symbols = get_symbols(limit=100)
 
     print(f"Found {len(symbols)} symbols")
 
-    for symbol, company_name in symbols:
-
+    for symbol in symbols:
         print(f"Fetching {symbol}")
 
-        price, percent_change, date = get_stock_price(symbol)
-        if price and date:
-            insert_stock(symbol, company_name, price, percent_change, date)
+        stock_data = get_stock_price(symbol)
 
-    print("Stock load complete")
+        if not stock_data:
+            continue
+
+        price, percent_change, volume, timestamp = stock_data
+
+        insert_stock_price(symbol, price, percent_change, volume, timestamp)
+
+        time.sleep(12)  
+
+    print("Stock data loaded successfully")
 
 
 if __name__ == "__main__":
